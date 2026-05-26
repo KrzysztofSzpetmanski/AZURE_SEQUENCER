@@ -4,8 +4,11 @@
 
 #define HRDW_PIN_ENC_L_SW 0u
 #define HRDW_PIN_ENC_R_SW 1u
-#define HRDW_PIN_SW_A 2u
-#define HRDW_PIN_SW_B 3u
+#define HRDW_PIN_SW1 2u
+#define HRDW_PIN_SW2 3u
+/* Backward-compatible aliases */
+#define HRDW_PIN_SW_A HRDW_PIN_SW1
+#define HRDW_PIN_SW_B HRDW_PIN_SW2
 
 #define HRDW_PIN_I2C_SDA 4u
 #define HRDW_PIN_I2C_SCL 5u

@@ -20,13 +20,23 @@ typedef struct {
   uint8_t length;
   uint8_t edit_channel;
   uint8_t edit_step;
+  uint8_t clock_mode; /* 0=INT, 1=EXT */
+  uint16_t bpm;
   uint8_t run;
-  uint32_t pattern[4];
+  uint64_t pattern[4];
 } trigseq_settings_t;
+
+typedef struct {
+  uint8_t clock_mode; /* 0=INT, 1=EXT */
+  uint16_t bpm;
+  uint8_t steps[4];
+  uint8_t hits[4];
+} euclid_settings_t;
 
 typedef struct {
   grids_settings_t grids;
   trigseq_settings_t trigseq;
+  euclid_settings_t euclid;
 } app_settings_data_t;
 
 void app_settings_set_defaults(app_settings_data_t* data);

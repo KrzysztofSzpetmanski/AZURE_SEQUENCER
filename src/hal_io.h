@@ -10,8 +10,10 @@ extern "C" {
 typedef enum {
   HAL_IO_BTN_ENC_L = 0,
   HAL_IO_BTN_ENC_R = 1,
-  HAL_IO_BTN_SW_A = 2,
-  HAL_IO_BTN_SW_B = 3,
+  HAL_IO_BTN_SW1 = 2,
+  HAL_IO_BTN_SW2 = 3,
+  HAL_IO_BTN_SW_A = HAL_IO_BTN_SW1,
+  HAL_IO_BTN_SW_B = HAL_IO_BTN_SW2,
   HAL_IO_BTN_COUNT = 4,
 } hal_io_button_t;
 
@@ -45,6 +47,11 @@ bool hal_io_dac_set_channels_code(const uint16_t codes_4[4]);
 
 void hal_io_oled_clear(void);
 void hal_io_oled_draw_line(uint8_t row, const char* text, bool inverted);
+void hal_io_oled_draw_line_color(uint8_t row, const char* text, uint16_t fg, uint16_t bg);
+void hal_io_oled_draw_text(uint8_t x, uint8_t y, const char* text, bool inverted);
+void hal_io_oled_draw_pixel(uint8_t x, uint8_t y, bool white);
+void hal_io_oled_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white);
+void hal_io_oled_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white);
 
 #ifdef __cplusplus
 }

@@ -4,7 +4,7 @@
 
 static uint8_t clamp_len(uint8_t len) {
   if (len < 4u) return 4u;
-  if (len > 32u) return 32u;
+  if (len > 64u) return 64u;
   return len;
 }
 
@@ -24,9 +24,9 @@ void trigseq_engine_init(trigseq_engine_t* s, uint32_t seed) {
   s->length = 16u;
   s->step = -1;
   for (uint8_t ch = 0u; ch < 4u; ++ch) {
-    s->pattern[ch] = rng32(s);
+    s->pattern[ch] = ((uint64_t)rng32(s) << 32u) | rng32(s);
     if (s->pattern[ch] == 0u) {
-      s->pattern[ch] = (1u << (ch + 1u));
+      s->pattern[ch] = ((uint64_t)1u << (ch + 1u));
     }
   }
 }
@@ -36,13 +36,13 @@ void trigseq_engine_reset(trigseq_engine_t* s) {
   s->step = -1;
 }
 
-void trigseq_engine_set_length(trigseq_engine_t* s, uint8_t length_4_to_32) {
+void trigseq_engine_set_length(trigseq_engine_t* s, uint8_t length_4_to_64) {
   uint8_t len;
   if (s == NULL) return;
-  len = clamp_len(length_4_to_32);
+  len = clamp_len(length_4_to_64);
   s->length = len;
-  if (s->step >= (int8_t)len) {
-    s->step = (int8_t)(len - 1u);
+  if (s->step >= (int16_t)len) {
+    s->step = (int16_t)(len - 1u);
   }
 }
 
@@ -51,23 +51,23 @@ uint8_t trigseq_engine_get_length(const trigseq_engine_t* s) {
   return s->length;
 }
 
-bool trigseq_engine_get_step_bit(const trigseq_engine_t* s, uint8_t ch0_to_3, uint8_t step0_to_31) {
+bool trigseq_engine_get_step_bit(const trigseq_engine_t* s, uint8_t ch0_to_3, uint8_t step0_to_63) {
   uint8_t ch;
   uint8_t step;
   if (s == NULL) return false;
   ch = (uint8_t)(ch0_to_3 & 0x03u);
-  step = (uint8_t)(step0_to_31 & 0x1Fu);
+  step = (uint8_t)(step0_to_63 & 0x3Fu);
   return ((s->pattern[ch] >> step) & 0x01u) != 0u;
 }
 
-void trigseq_engine_set_step_bit(trigseq_engine_t* s, uint8_t ch0_to_3, uint8_t step0_to_31, bool on) {
+void trigseq_engine_set_step_bit(trigseq_engine_t* s, uint8_t ch0_to_3, uint8_t step0_to_63, bool on) {
   uint8_t ch;
   uint8_t step;
-  uint32_t mask;
+  uint64_t mask;
   if (s == NULL) return;
   ch = (uint8_t)(ch0_to_3 & 0x03u);
-  step = (uint8_t)(step0_to_31 & 0x1Fu);
-  mask = (uint32_t)1u << step;
+  step = (uint8_t)(step0_to_63 & 0x3Fu);
+  mask = (uint64_t)1u << step;
   if (on) {
     s->pattern[ch] |= mask;
   } else {
@@ -78,7 +78,7 @@ void trigseq_engine_set_step_bit(trigseq_engine_t* s, uint8_t ch0_to_3, uint8_t 
 void trigseq_engine_clock(trigseq_engine_t* s, bool trig_out_4[4]) {
   if (s == NULL || trig_out_4 == NULL) return;
 
-  if (s->step >= (int8_t)(s->length - 1u)) {
+  if (s->step >= (int16_t)(s->length - 1u)) {
     s->step = -1;
   }
   s->step += 1;

@@ -7,7 +7,7 @@
 #include "pico/stdlib.h"
 
 #define CALIBRATION_FLASH_MAGIC 0x43414C32u /* CAL2 */
-#define CALIBRATION_FLASH_VERSION 2u
+#define CALIBRATION_FLASH_VERSION 3u
 #define CALIBRATION_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 
 typedef struct {
@@ -115,10 +115,10 @@ void calibration_set_defaults(calibration_data_t* data) {
   if (data == NULL) return;
 
   for (ch = 0; ch < CALIBRATION_CHANNELS; ++ch) {
-    data->pt_code[ch][CAL_POINT_NEG3] = prescaled_code_from_output_mv(-3000);
-    data->pt_code[ch][CAL_POINT_0] = prescaled_code_from_output_mv(0);
-    data->pt_code[ch][CAL_POINT_POS3] = prescaled_code_from_output_mv(3000);
-    data->pt_code[ch][CAL_POINT_POS6] = prescaled_code_from_output_mv(6000);
+    data->pt_code[ch][CAL_POINT_NEG3] = 0u;
+    data->pt_code[ch][CAL_POINT_0] = 1220u;
+    data->pt_code[ch][CAL_POINT_POS3] = 2453u;
+    data->pt_code[ch][CAL_POINT_POS6] = 3680u;
   }
 }
 

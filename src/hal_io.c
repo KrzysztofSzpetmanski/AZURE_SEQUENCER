@@ -20,6 +20,8 @@
 #define MCP4728_I2C_ADDR_MAX 0x67u
 #define DAC_CODE_MAX_12BIT 4095u
 #define BTN_DEBOUNCE_MS 25u
+#define ENCODER_PIN_MASK 0x03u
+#define ENCODER_PIN_RISING_EDGE 0x02u
 
 typedef struct {
   char ch;
@@ -30,8 +32,8 @@ typedef struct {
   uint8_t pin_a;
   uint8_t pin_b;
   bool invert_direction;
-  uint8_t transition;
-  int8_t accumulator;
+  uint8_t pin_state_a;
+  uint8_t pin_state_b;
   int32_t count;
   uint32_t inc_events;
   uint32_t dec_events;
@@ -45,13 +47,6 @@ typedef struct {
   uint64_t last_change_ms;
   uint32_t press_count;
 } button_state_t;
-
-static const int8_t k_quadrature_table[16] = {
-    0, -1, 1, 0,
-    1, 0, 0, -1,
-    -1, 0, 0, 1,
-    0, 1, -1, 0,
-};
 
 static const glyph_t k_font[] = {
     {' ', {0x00, 0x00, 0x00, 0x00, 0x00}},
@@ -98,6 +93,7 @@ static const glyph_t k_font[] = {
     {'Y', {0x07, 0x08, 0x70, 0x08, 0x07}},
     {'Z', {0x61, 0x51, 0x49, 0x45, 0x43}},
     {'?', {0x02, 0x01, 0x51, 0x09, 0x06}},
+    {'>', {0x08, 0x14, 0x22, 0x41, 0x00}},
     {'(', {0x00, 0x1C, 0x22, 0x41, 0x00}},
     {')', {0x00, 0x41, 0x22, 0x1C, 0x00}},
 };
@@ -105,37 +101,51 @@ static const glyph_t k_font[] = {
 static encoder_state_t g_enc_l;
 static encoder_state_t g_enc_r;
 static button_state_t g_buttons[HAL_IO_BTN_COUNT];
+static struct repeating_timer g_encoder_poll_timer;
 
 static bool g_dac_addr_found = false;
 static uint8_t g_dac_i2c_addr = MCP4728_I2C_ADDR_DEFAULT;
 
 static inline bool is_pressed(uint8_t pin) { return !gpio_get(pin); }
 
-static uint8_t read_encoder_ab(uint8_t pin_a, uint8_t pin_b) {
-  uint8_t a = gpio_get(pin_a) ? 1u : 0u;
-  uint8_t b = gpio_get(pin_b) ? 1u : 0u;
-  return (uint8_t)((a << 1u) | b);
+static void poll_encoder(encoder_state_t* enc) {
+  uint8_t step = 0;
+  uint8_t a;
+  uint8_t b;
+
+  enc->pin_state_a = (uint8_t)((enc->pin_state_a << 1u) | (gpio_get(enc->pin_a) ? 1u : 0u));
+  enc->pin_state_b = (uint8_t)((enc->pin_state_b << 1u) | (gpio_get(enc->pin_b) ? 1u : 0u));
+
+  a = (uint8_t)(enc->pin_state_a & ENCODER_PIN_MASK);
+  b = (uint8_t)(enc->pin_state_b & ENCODER_PIN_MASK);
+
+  // Same strategy as O_C-Phazerville: detect a clean rising edge on one pin
+  // while the other is low. This is very robust for these mechanical encoders.
+  if (a == ENCODER_PIN_RISING_EDGE && b == 0x00u) {
+    step = 1u;
+  } else if (b == ENCODER_PIN_RISING_EDGE && a == 0x00u) {
+    step = 2u;  // encoded as -1 below
+  }
+
+  if (step != 0u) {
+    int32_t delta = (step == 1u) ? 1 : -1;
+    if (enc->invert_direction) {
+      delta = -delta;
+    }
+    enc->count += delta;
+    if (delta > 0) {
+      enc->inc_events += 1u;
+    } else {
+      enc->dec_events += 1u;
+    }
+  }
 }
 
-static void poll_encoder(encoder_state_t* enc) {
-  uint8_t ab = read_encoder_ab(enc->pin_a, enc->pin_b);
-  int8_t step;
-  enc->transition = (uint8_t)(((enc->transition << 2u) | ab) & 0x0Fu);
-  step = k_quadrature_table[enc->transition];
-  if (enc->invert_direction) {
-    step = (int8_t)(-step);
-  }
-  enc->accumulator = (int8_t)(enc->accumulator + step);
-
-  if (enc->accumulator >= 2) {
-    enc->count += 1;
-    enc->inc_events += 1u;
-    enc->accumulator = 0;
-  } else if (enc->accumulator <= -2) {
-    enc->count -= 1;
-    enc->dec_events += 1u;
-    enc->accumulator = 0;
-  }
+static bool encoder_poll_timer_cb(struct repeating_timer* timer) {
+  (void)timer;
+  poll_encoder(&g_enc_l);
+  poll_encoder(&g_enc_r);
+  return true;
 }
 
 static void update_button_state(button_state_t* b, bool raw_level, uint64_t now_ms) {
@@ -485,10 +495,10 @@ void hal_io_init(void) {
 
   g_enc_l.pin_a = HRDW_PIN_ENC_L_A;
   g_enc_l.pin_b = HRDW_PIN_ENC_L_B;
-  g_enc_l.invert_direction = false;
+  g_enc_l.invert_direction = true;
   g_enc_r.pin_a = HRDW_PIN_ENC_R_A;
   g_enc_r.pin_b = HRDW_PIN_ENC_R_B;
-  g_enc_r.invert_direction = true;
+  g_enc_r.invert_direction = false;
 
   gpio_init(g_enc_l.pin_a);
   gpio_set_dir(g_enc_l.pin_a, GPIO_IN);
@@ -503,13 +513,16 @@ void hal_io_init(void) {
   gpio_set_dir(g_enc_r.pin_b, GPIO_IN);
   gpio_pull_up(g_enc_r.pin_b);
 
-  g_enc_l.transition = read_encoder_ab(g_enc_l.pin_a, g_enc_l.pin_b);
-  g_enc_r.transition = read_encoder_ab(g_enc_r.pin_a, g_enc_r.pin_b);
+  g_enc_l.pin_state_a = 0xFFu;
+  g_enc_l.pin_state_b = 0xFFu;
+  g_enc_r.pin_state_a = 0xFFu;
+  g_enc_r.pin_state_b = 0xFFu;
+  add_repeating_timer_us(-1000, encoder_poll_timer_cb, NULL, &g_encoder_poll_timer);
 
   g_buttons[HAL_IO_BTN_ENC_L].pin = HRDW_PIN_ENC_L_SW;
   g_buttons[HAL_IO_BTN_ENC_R].pin = HRDW_PIN_ENC_R_SW;
-  g_buttons[HAL_IO_BTN_SW_A].pin = HRDW_PIN_SW_A;
-  g_buttons[HAL_IO_BTN_SW_B].pin = HRDW_PIN_SW_B;
+  g_buttons[HAL_IO_BTN_SW1].pin = HRDW_PIN_SW1;
+  g_buttons[HAL_IO_BTN_SW2].pin = HRDW_PIN_SW2;
 
   for (size_t i = 0; i < HAL_IO_BTN_COUNT; ++i) {
     gpio_init(g_buttons[i].pin);
@@ -531,8 +544,6 @@ void hal_io_init(void) {
 }
 
 void hal_io_poll(uint64_t now_ms) {
-  poll_encoder(&g_enc_l);
-  poll_encoder(&g_enc_r);
   for (size_t i = 0; i < HAL_IO_BTN_COUNT; ++i) {
     update_button_state(&g_buttons[i], is_pressed(g_buttons[i].pin), now_ms);
   }
@@ -578,11 +589,9 @@ bool hal_io_trigger_active(hal_io_trigger_t tr) {
       pin = HRDW_PIN_TR2_IN;
       break;
     case HAL_IO_TR3:
-      pin = HRDW_PIN_TR3_IN;
-      break;
+      return false;
     case HAL_IO_TR4:
-      pin = HRDW_PIN_TR4_IN;
-      break;
+      return false;
     default:
       return false;
   }
@@ -615,13 +624,84 @@ void hal_io_oled_clear(void) {
   fill_screen(COLOR_BLACK);
 }
 
-void hal_io_oled_draw_line(uint8_t row, const char* text, bool inverted) {
+void hal_io_oled_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white) {
+  uint16_t color = white ? COLOR_WHITE : COLOR_BLACK;
+  uint8_t hi = (uint8_t)(color >> 8);
+  uint8_t lo = (uint8_t)(color & 0xFFu);
+  uint8_t px[2 * 64];
+  uint16_t x0 = x;
+  uint16_t y0 = y;
+  uint16_t x1;
+  uint16_t y1;
+  uint16_t row_w;
+  uint16_t row_h;
+  size_t i;
+
+  if (w == 0u || h == 0u) return;
+  if (x0 >= OLED_W || y0 >= OLED_H) return;
+
+  x1 = (uint16_t)(x0 + w - 1u);
+  y1 = (uint16_t)(y0 + h - 1u);
+  if (x1 >= OLED_W) x1 = OLED_W - 1u;
+  if (y1 >= OLED_H) y1 = OLED_H - 1u;
+
+  row_w = (uint16_t)(x1 - x0 + 1u);
+  row_h = (uint16_t)(y1 - y0 + 1u);
+
+  for (i = 0; i < 64u; ++i) {
+    px[2u * i] = hi;
+    px[2u * i + 1u] = lo;
+  }
+
+  set_addr_window(x0, y0, x1, y1);
+  write_cmd(0x2C);
+
+  for (uint16_t r = 0u; r < row_h; ++r) {
+    uint16_t remain = row_w;
+    while (remain > 0u) {
+      uint16_t chunk = (remain > 64u) ? 64u : remain;
+      write_data(px, (size_t)(chunk * 2u));
+      remain = (uint16_t)(remain - chunk);
+    }
+  }
+}
+
+void hal_io_oled_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white) {
+  if (w == 0u || h == 0u) return;
+
+  hal_io_oled_fill_rect(x, y, w, 1u, white);
+  if (h > 1u) {
+    hal_io_oled_fill_rect(x, (uint8_t)(y + h - 1u), w, 1u, white);
+  }
+  if (h > 2u) {
+    hal_io_oled_fill_rect(x, (uint8_t)(y + 1u), 1u, (uint8_t)(h - 2u), white);
+    if (w > 1u) {
+      hal_io_oled_fill_rect((uint8_t)(x + w - 1u), (uint8_t)(y + 1u), 1u, (uint8_t)(h - 2u), white);
+    }
+  }
+}
+
+void hal_io_oled_draw_pixel(uint8_t x, uint8_t y, bool white) {
+  hal_io_oled_fill_rect(x, y, 1u, 1u, white);
+}
+
+void hal_io_oled_draw_line_color(uint8_t row, const char* text, uint16_t fg, uint16_t bg) {
   char line[27];
-  uint16_t fg = inverted ? COLOR_BLACK : COLOR_WHITE;
-  uint16_t bg = inverted ? COLOR_WHITE : COLOR_BLACK;
   int16_t y = (int16_t)(row * 8u);
 
   if (row >= (OLED_H / 8u)) return;
   snprintf(line, sizeof(line), "%-26.26s", text);
   draw_text(0, y, line, fg, bg);
+}
+
+void hal_io_oled_draw_line(uint8_t row, const char* text, bool inverted) {
+  uint16_t fg = inverted ? COLOR_BLACK : COLOR_WHITE;
+  uint16_t bg = inverted ? COLOR_WHITE : COLOR_BLACK;
+  hal_io_oled_draw_line_color(row, text, fg, bg);
+}
+
+void hal_io_oled_draw_text(uint8_t x, uint8_t y, const char* text, bool inverted) {
+  uint16_t fg = inverted ? COLOR_BLACK : COLOR_WHITE;
+  uint16_t bg = inverted ? COLOR_WHITE : COLOR_BLACK;
+  draw_text((int16_t)x, (int16_t)y, text, fg, bg);
 }

@@ -7,7 +7,7 @@
 #include "pico/stdlib.h"
 
 #define APP_SETTINGS_FLASH_MAGIC 0x41505053u /* APPS */
-#define APP_SETTINGS_FLASH_VERSION 1u
+#define APP_SETTINGS_FLASH_VERSION 4u
 #define APP_SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - (2u * FLASH_SECTOR_SIZE))
 
 typedef struct {
@@ -69,11 +69,24 @@ void app_settings_set_defaults(app_settings_data_t* data) {
   data->trigseq.length = 16u;
   data->trigseq.edit_channel = 0u;
   data->trigseq.edit_step = 0u;
+  data->trigseq.clock_mode = 1u; /* EXT */
+  data->trigseq.bpm = 120u;
   data->trigseq.run = 1u;
-  data->trigseq.pattern[0] = 0xAAAAAAAAu;
-  data->trigseq.pattern[1] = 0xCCCCCCCCu;
-  data->trigseq.pattern[2] = 0xF0F0F0F0u;
-  data->trigseq.pattern[3] = 0xFF00FF00u;
+  data->trigseq.pattern[0] = 0x000000000000AAAAull;
+  data->trigseq.pattern[1] = 0x000000000000CCCCull;
+  data->trigseq.pattern[2] = 0x000000000000F0F0ull;
+  data->trigseq.pattern[3] = 0x000000000000FF00ull;
+
+  data->euclid.clock_mode = 1u; /* EXT */
+  data->euclid.bpm = 120u;
+  data->euclid.steps[0] = 16u;
+  data->euclid.steps[1] = 16u;
+  data->euclid.steps[2] = 16u;
+  data->euclid.steps[3] = 16u;
+  data->euclid.hits[0] = 4u;
+  data->euclid.hits[1] = 6u;
+  data->euclid.hits[2] = 8u;
+  data->euclid.hits[3] = 10u;
 }
 
 bool app_settings_init(app_settings_data_t* data) {
