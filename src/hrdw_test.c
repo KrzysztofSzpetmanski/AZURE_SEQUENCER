@@ -55,7 +55,11 @@ typedef enum {
   GRIDS_PARAM_MAP_X = 2,
   GRIDS_PARAM_MAP_Y = 3,
   GRIDS_PARAM_CHAOS = 4,
-  GRIDS_PARAM_COUNT = 5,
+  GRIDS_PARAM_PROB1 = 5,
+  GRIDS_PARAM_PROB2 = 6,
+  GRIDS_PARAM_PROB3 = 7,
+  GRIDS_PARAM_PROB4 = 8,
+  GRIDS_PARAM_COUNT = 9,
 } grids_param_t;
 
 typedef enum {
@@ -84,8 +88,11 @@ typedef enum {
   TRIGSEQ_PARAM_LEN = 0,
   TRIGSEQ_PARAM_CLOCK = 1,
   TRIGSEQ_PARAM_BPM = 2,
-  TRIGSEQ_PARAM_RUN = 3,
-  TRIGSEQ_PARAM_COUNT = 4,
+  TRIGSEQ_PARAM_PROB1 = 3,
+  TRIGSEQ_PARAM_PROB2 = 4,
+  TRIGSEQ_PARAM_PROB3 = 5,
+  TRIGSEQ_PARAM_PROB4 = 6,
+  TRIGSEQ_PARAM_COUNT = 7,
 } trigseq_param_t;
 
 typedef enum {
@@ -103,13 +110,17 @@ typedef enum {
   EUCLID_PARAM_BPM = 1,
   EUCLID_PARAM_CH1_STEPS = 2,
   EUCLID_PARAM_CH1_HITS = 3,
-  EUCLID_PARAM_CH2_STEPS = 4,
-  EUCLID_PARAM_CH2_HITS = 5,
-  EUCLID_PARAM_CH3_STEPS = 6,
-  EUCLID_PARAM_CH3_HITS = 7,
-  EUCLID_PARAM_CH4_STEPS = 8,
-  EUCLID_PARAM_CH4_HITS = 9,
-  EUCLID_PARAM_COUNT = 10,
+  EUCLID_PARAM_CH1_PRB = 4,
+  EUCLID_PARAM_CH2_STEPS = 5,
+  EUCLID_PARAM_CH2_HITS = 6,
+  EUCLID_PARAM_CH2_PRB = 7,
+  EUCLID_PARAM_CH3_STEPS = 8,
+  EUCLID_PARAM_CH3_HITS = 9,
+  EUCLID_PARAM_CH3_PRB = 10,
+  EUCLID_PARAM_CH4_STEPS = 11,
+  EUCLID_PARAM_CH4_HITS = 12,
+  EUCLID_PARAM_CH4_PRB = 13,
+  EUCLID_PARAM_COUNT = 14,
 } euclid_param_t;
 
 typedef struct {
@@ -132,9 +143,11 @@ typedef struct {
   uint8_t map_x;
   uint8_t map_y;
   uint8_t chaos;
+  uint8_t prob[4];
   uint16_t fill_raw[4];
   int32_t fill_mv[4];
   uint8_t fill_u8[4];
+  uint32_t prob_rng_state;
   bool trig_state[4];
   uint64_t trig_off_ms[4];
   uint64_t next_int_tick_ms;
@@ -169,6 +182,8 @@ typedef struct {
   uint8_t step32[2];
   uint8_t step64;
   bool run;
+  uint8_t prob[4];
+  uint32_t prob_rng_state;
   bool trig_state[4];
   uint64_t trig_off_ms[4];
   bool prev_clk_active;
@@ -185,6 +200,8 @@ typedef struct {
   int bpm;
   uint8_t steps[4];
   uint8_t hits[4];
+  uint8_t prob[4];
+  uint32_t prob_rng_state;
   uint8_t phase[4];
   uint64_t next_int_tick_ms;
   euclid_focus_t focus;
@@ -239,6 +256,8 @@ static grids_state_t g_grids = {
     .map_x = 128,
     .map_y = 128,
     .chaos = 64,
+    .prob = {100u, 100u, 100u, 100u},
+    .prob_rng_state = 0x4D595DF4u,
     .last_out_mask = 0xFFu,
     .preview_cache_valid = false,
     .preview_cache_bits = {{false}},
@@ -266,6 +285,8 @@ static trigseq_state_t g_trigseq = {
     .step32 = {0u, 0u},
     .step64 = 0u,
     .run = true,
+    .prob = {100u, 100u, 100u, 100u},
+    .prob_rng_state = 0x2A1F6C3Du,
     .last_out_mask = 0xFFu,
     .outputs_ok = false,
     .status_until_ms = 0u,
@@ -273,11 +294,13 @@ static trigseq_state_t g_trigseq = {
 };
 
 static euclid_state_t g_euclid = {
-    .clock = EUCLID_CLOCK_EXT,
-    .bpm = 120,
-    .steps = {16u, 16u, 16u, 16u},
-    .hits = {4u, 6u, 8u, 10u},
-    .phase = {0u, 0u, 0u, 0u},
+  .clock = EUCLID_CLOCK_EXT,
+  .bpm = 120,
+  .steps = {16u, 16u, 16u, 16u},
+  .hits = {4u, 6u, 8u, 10u},
+  .prob = {100u, 100u, 100u, 100u},
+  .prob_rng_state = 0x7A31C9E5u,
+  .phase = {0u, 0u, 0u, 0u},
     .next_int_tick_ms = 0u,
     .focus = EUCLID_FOCUS_MENU,
     .selected_param = EUCLID_PARAM_CLOCK,
@@ -307,6 +330,15 @@ static uint8_t clamp_u8i(int x) {
   if (x > 255) return 255u;
   return (uint8_t)x;
 }
+
+static uint8_t clamp_u8i_100(int x) {
+  if (x < 0) return 0u;
+  if (x > 100) return 100u;
+  return (uint8_t)x;
+}
+
+static uint8_t prob_rng8(uint32_t* state);
+static bool prob_pass(uint8_t prob_percent, uint32_t* rng_state);
 
 static uint8_t trigseq_len_for_mode(trigseq_len_mode_t mode) {
   if (mode == TRIGSEQ_LEN_2X32) return 32u;
@@ -570,7 +602,7 @@ static void trigseq_do_step(uint64_t now_ms) {
   }
 
   for (uint8_t i = 0u; i < 4u; ++i) {
-    if (trig[i]) {
+    if (trig[i] && prob_pass(g_trigseq.prob[i], &g_trigseq.prob_rng_state)) {
       // Keep pulse width constant: do not extend an already active pulse.
       if (!g_trigseq.trig_state[i]) {
         g_trigseq.trig_state[i] = true;
@@ -597,10 +629,12 @@ static void trigseq_reset_engine(void) {
 
 static void trigseq_enter(void) {
   uint64_t now_ms = to_ms_since_boot(get_absolute_time());
+  uint32_t now_us = (uint32_t)to_us_since_boot(get_absolute_time());
   if (!g_trigseq.engine_initialized) {
-    trigseq_engine_init(&g_trigseq.engine, (uint32_t)to_us_since_boot(get_absolute_time()));
+    trigseq_engine_init(&g_trigseq.engine, now_us);
     g_trigseq.engine_initialized = true;
   }
+  g_trigseq.prob_rng_state = now_us ^ 0x5EED1234u;
   g_trigseq.run = true;
   g_trigseq.focus = TRIGSEQ_FOCUS_MENU;
   g_trigseq.selected_param = TRIGSEQ_PARAM_LEN;
@@ -697,7 +731,8 @@ static void euclid_update_pulses(uint64_t now_ms) {
 static void euclid_do_step(uint64_t now_ms) {
   for (uint8_t ch = 0u; ch < 4u; ++ch) {
     uint8_t step = g_euclid.phase[ch];
-    if (euclid_step_is_hit(g_euclid.steps[ch], g_euclid.hits[ch], step)) {
+    if (euclid_step_is_hit(g_euclid.steps[ch], g_euclid.hits[ch], step) &&
+        prob_pass(g_euclid.prob[ch], &g_euclid.prob_rng_state)) {
       // Keep pulse width constant: do not extend an already active pulse.
       if (!g_euclid.trig_state[ch]) {
         g_euclid.trig_state[ch] = true;
@@ -722,8 +757,10 @@ static void euclid_reset_engine(void) {
 
 static void euclid_enter(void) {
   uint64_t now_ms = to_ms_since_boot(get_absolute_time());
+  uint32_t now_us = (uint32_t)to_us_since_boot(get_absolute_time());
   g_euclid.focus = EUCLID_FOCUS_MENU;
   g_euclid.selected_param = EUCLID_PARAM_CLOCK;
+  g_euclid.prob_rng_state = now_us ^ 0x1E7A4D99u;
   euclid_reset_engine();
   if (g_euclid.clock == EUCLID_CLOCK_INT) {
     g_euclid.next_int_tick_ms = now_ms + euclid_int_interval_ms();
@@ -740,6 +777,9 @@ static void load_runtime_from_app_settings(void) {
   g_grids.map_x = g_app_settings_data.grids.map_x;
   g_grids.map_y = g_app_settings_data.grids.map_y;
   g_grids.chaos = g_app_settings_data.grids.chaos;
+  for (uint8_t i = 0u; i < 4u; ++i) {
+    g_grids.prob[i] = clamp_u8i_100((int)g_app_settings_data.grids.prob[i]);
+  }
 
   if (!g_trigseq.engine_initialized) {
     trigseq_engine_init(&g_trigseq.engine, 0x13579BDFu);
@@ -755,10 +795,13 @@ static void load_runtime_from_app_settings(void) {
       (g_app_settings_data.trigseq.clock_mode == 0u) ? TRIGSEQ_CLOCK_INT : TRIGSEQ_CLOCK_EXT;
   g_trigseq.bpm = clamp_i((int)g_app_settings_data.trigseq.bpm, TRIGSEQ_BPM_MIN, TRIGSEQ_BPM_MAX);
   for (uint8_t i = 0u; i < 4u; ++i) {
+    g_trigseq.prob[i] = clamp_u8i_100((int)g_app_settings_data.trigseq.prob[i]);
+  }
+  for (uint8_t i = 0u; i < 4u; ++i) {
     g_trigseq.engine.pattern[i] = g_app_settings_data.trigseq.pattern[i];
   }
   g_trigseq.cursor_step = (uint8_t)(g_app_settings_data.trigseq.edit_step & 0x3Fu);
-  g_trigseq.run = g_app_settings_data.trigseq.run != 0u;
+  g_trigseq.run = true;
   trigseq_invalidate_grid_cache();
 
   g_euclid.clock = (g_app_settings_data.euclid.clock_mode == 0u) ? EUCLID_CLOCK_INT : EUCLID_CLOCK_EXT;
@@ -771,6 +814,7 @@ static void load_runtime_from_app_settings(void) {
     if (hits > steps) hits = steps;
     g_euclid.steps[i] = steps;
     g_euclid.hits[i] = hits;
+    g_euclid.prob[i] = clamp_u8i_100((int)g_app_settings_data.euclid.prob[i]);
   }
   g_euclid.grid_cache_valid = false;
 }
@@ -781,13 +825,19 @@ static void capture_runtime_to_app_settings(void) {
   g_app_settings_data.grids.map_x = g_grids.map_x;
   g_app_settings_data.grids.map_y = g_grids.map_y;
   g_app_settings_data.grids.chaos = g_grids.chaos;
+  for (uint8_t i = 0u; i < 4u; ++i) {
+    g_app_settings_data.grids.prob[i] = clamp_u8i_100((int)g_grids.prob[i]);
+  }
 
   g_app_settings_data.trigseq.length = trigseq_len_for_mode(g_trigseq.len_mode);
   g_app_settings_data.trigseq.edit_channel = (uint8_t)g_trigseq.len_mode;
   g_app_settings_data.trigseq.edit_step = g_trigseq.cursor_step;
   g_app_settings_data.trigseq.clock_mode = (g_trigseq.clock == TRIGSEQ_CLOCK_INT) ? 0u : 1u;
   g_app_settings_data.trigseq.bpm = (uint16_t)clamp_i(g_trigseq.bpm, TRIGSEQ_BPM_MIN, TRIGSEQ_BPM_MAX);
-  g_app_settings_data.trigseq.run = g_trigseq.run ? 1u : 0u;
+  g_app_settings_data.trigseq.run = 1u;
+  for (uint8_t i = 0u; i < 4u; ++i) {
+    g_app_settings_data.trigseq.prob[i] = clamp_u8i_100((int)g_trigseq.prob[i]);
+  }
   for (uint8_t i = 0u; i < 4u; ++i) {
     g_app_settings_data.trigseq.pattern[i] = g_trigseq.engine.pattern[i];
   }
@@ -797,6 +847,7 @@ static void capture_runtime_to_app_settings(void) {
   for (uint8_t i = 0u; i < 4u; ++i) {
     g_app_settings_data.euclid.steps[i] = g_euclid.steps[i];
     g_app_settings_data.euclid.hits[i] = g_euclid.hits[i];
+    g_app_settings_data.euclid.prob[i] = clamp_u8i_100((int)g_euclid.prob[i]);
   }
 }
 
@@ -837,6 +888,21 @@ static void grids_sample_fill_from_cv(void) {
   }
 }
 
+static uint8_t prob_rng8(uint32_t* state) {
+  uint32_t x = *state;
+  x ^= x << 13u;
+  x ^= x >> 17u;
+  x ^= x << 5u;
+  *state = x;
+  return (uint8_t)(x >> 24u);
+}
+
+static bool prob_pass(uint8_t prob_percent, uint32_t* rng_state) {
+  if (prob_percent >= 100u) return true;
+  if (prob_percent == 0u) return false;
+  return (prob_rng8(rng_state) % 100u) < prob_percent;
+}
+
 static void grids_reset_outputs_and_state(void) {
   for (uint8_t i = 0u; i < 4u; ++i) {
     g_grids.trig_state[i] = false;
@@ -853,7 +919,7 @@ static void grids_do_step(uint64_t now_ms) {
   grids_engine_step(&g_grids.engine, g_grids.map_x, g_grids.map_y, g_grids.chaos, g_grids.fill_u8, trig);
 
   for (uint8_t i = 0u; i < 4u; ++i) {
-    if (trig[i]) {
+    if (trig[i] && prob_pass(g_grids.prob[i], &g_grids.prob_rng_state)) {
       // Keep pulse width constant: do not extend an already active pulse.
       if (!g_grids.trig_state[i]) {
         g_grids.trig_state[i] = true;
@@ -896,8 +962,10 @@ static void grids_reset_engine(void) {
 
 static void grids_enter(void) {
   uint64_t now_ms = to_ms_since_boot(get_absolute_time());
+  uint32_t now_us = (uint32_t)to_us_since_boot(get_absolute_time());
   g_grids.preview_cache_valid = false;
-  grids_engine_init(&g_grids.engine, (uint32_t)to_us_since_boot(get_absolute_time()));
+  grids_engine_init(&g_grids.engine, now_us);
+  g_grids.prob_rng_state = now_us ^ 0xA5A55A5Au;
   grids_reset_engine();
   grids_sample_fill_from_cv();
   g_grids.prev_clk_active = hal_io_trigger_active(HAL_IO_TR1);
@@ -1054,8 +1122,13 @@ static void update_grids(int32_t d_l, int32_t d_r, bool edge_enc_r, uint64_t now
       g_grids.map_x = clamp_u8i((int)g_grids.map_x + (int)d_r);
     } else if (g_grids.selected_param == GRIDS_PARAM_MAP_Y) {
       g_grids.map_y = clamp_u8i((int)g_grids.map_y + (int)d_r);
-    } else {
+    } else if (g_grids.selected_param == GRIDS_PARAM_CHAOS) {
       g_grids.chaos = clamp_u8i((int)g_grids.chaos + (int)d_r);
+    } else {
+      uint8_t idx = (uint8_t)((int)g_grids.selected_param - (int)GRIDS_PARAM_PROB1);
+      if (idx < 4u) {
+        g_grids.prob[idx] = clamp_u8i_100((int)g_grids.prob[idx] + (int)d_r);
+      }
     }
     g_grids.preview_cache_valid = false;
   }
@@ -1095,6 +1168,7 @@ static void update_trigseq(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_
                            uint64_t now_ms) {
   bool clk_active;
   bool rst_active;
+  g_trigseq.run = true;
 
   if (edge_sw1) {
     g_trigseq.focus = (g_trigseq.focus == TRIGSEQ_FOCUS_GRID) ? TRIGSEQ_FOCUS_MENU : TRIGSEQ_FOCUS_GRID;
@@ -1156,9 +1230,9 @@ static void update_trigseq(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_
           g_trigseq.next_int_tick_ms = now_ms + trigseq_int_interval_ms();
         }
       } else {
-        g_trigseq.run = d_r > 0;
-        if (!g_trigseq.run) {
-          trigseq_reset_outputs_and_state();
+        uint8_t idx = (uint8_t)((int)g_trigseq.selected_param - (int)TRIGSEQ_PARAM_PROB1);
+        if (idx < 4u) {
+          g_trigseq.prob[idx] = clamp_u8i_100((int)g_trigseq.prob[idx] + (int)d_r);
         }
       }
     }
@@ -1172,14 +1246,14 @@ static void update_trigseq(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_
 
   if (g_trigseq.clock == TRIGSEQ_CLOCK_EXT) {
     clk_active = hal_io_trigger_active(HAL_IO_TR1);
-    if (g_trigseq.run && clk_active && !g_trigseq.prev_clk_active) {
+    if (clk_active && !g_trigseq.prev_clk_active) {
       trigseq_do_step(now_ms);
     }
     g_trigseq.prev_clk_active = clk_active;
   } else {
     uint32_t interval = trigseq_int_interval_ms();
     uint8_t guard = 0;
-    while (g_trigseq.run && now_ms >= g_trigseq.next_int_tick_ms && guard < 8u) {
+    while (now_ms >= g_trigseq.next_int_tick_ms && guard < 8u) {
       trigseq_do_step(now_ms);
       g_trigseq.next_int_tick_ms += interval;
       ++guard;
@@ -1221,19 +1295,22 @@ static void update_euclid(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_s
         g_euclid.next_int_tick_ms = now_ms + euclid_int_interval_ms();
       }
     } else {
-      uint8_t ch = (uint8_t)(((int)g_euclid.selected_param - 2) / 2);
-      bool editing_steps = (((int)g_euclid.selected_param - 2) % 2) == 0;
+      uint8_t base = (uint8_t)((int)g_euclid.selected_param - 2);
+      uint8_t ch = (uint8_t)(base / 3u);
+      uint8_t field = (uint8_t)(base % 3u);  // 0=steps, 1=hits, 2=prob
       if (ch < 4u) {
-        if (editing_steps) {
+        if (field == 0u) {
           int next_steps = clamp_i((int)g_euclid.steps[ch] + (int)d_r, 4, 16);
           g_euclid.steps[ch] = (uint8_t)next_steps;
           if (g_euclid.hits[ch] > g_euclid.steps[ch]) {
             g_euclid.hits[ch] = g_euclid.steps[ch];
           }
           g_euclid.phase[ch] %= g_euclid.steps[ch];
-        } else {
+        } else if (field == 1u) {
           int next_hits = clamp_i((int)g_euclid.hits[ch] + (int)d_r, 0, (int)g_euclid.steps[ch]);
           g_euclid.hits[ch] = (uint8_t)next_hits;
+        } else {
+          g_euclid.prob[ch] = clamp_u8i_100((int)g_euclid.prob[ch] + (int)d_r);
         }
       }
     }
@@ -1398,8 +1475,12 @@ static void draw_grids(void) {
       (g_grids.status_until_ms > to_ms_since_boot(get_absolute_time())) && (g_grids.status[0] != '\0');
   bool preview[4][32];
   bool progress[4][32];
+  uint8_t prob1 = g_grids.prob[0];
+  uint8_t prob2 = g_grids.prob[1];
+  uint8_t prob3 = g_grids.prob[2];
+  uint8_t prob4 = g_grids.prob[3];
   const uint8_t grid_x = 14u;
-  const uint8_t grid_top = 43u;
+  const uint8_t grid_top = 49u;
   const uint8_t channel_stride = 14u;  // 2 rows * 6px + 2px visual gap between channels
   const uint8_t cell_pitch = 6u;
   const uint8_t cell_size = 6u;
@@ -1407,7 +1488,8 @@ static void draw_grids(void) {
   hal_io_oled_draw_line(0, "GRIDS", true);
   hal_io_oled_draw_line(1, "", false);
 
-  snprintf(line, sizeof(line), "CLK:%s BPM:%3d", g_grids.clock == GRIDS_CLOCK_INT ? "INT" : "EXT", g_grids.bpm);
+  snprintf(line, sizeof(line), "CLK:%s BPM:%3d CHAOS:%3u", g_grids.clock == GRIDS_CLOCK_INT ? "INT" : "EXT",
+           g_grids.bpm, (unsigned)g_grids.chaos);
   hal_io_oled_draw_line(2, line, false);
   if (g_grids.selected_param == GRIDS_PARAM_CLOCK) {
     snprintf(token, sizeof(token), "CLK:%s", g_grids.clock == GRIDS_CLOCK_INT ? "INT" : "EXT");
@@ -1415,6 +1497,9 @@ static void draw_grids(void) {
   } else if (g_grids.selected_param == GRIDS_PARAM_BPM) {
     snprintf(token, sizeof(token), "BPM:%3d", g_grids.bpm);
     hal_io_oled_draw_text((uint8_t)(8u * 6u), 16u, token, true);
+  } else if (g_grids.selected_param == GRIDS_PARAM_CHAOS) {
+    snprintf(token, sizeof(token), "CHAOS:%3u", (unsigned)g_grids.chaos);
+    hal_io_oled_draw_text((uint8_t)(16u * 6u), 16u, token, true);
   }
 
   snprintf(line, sizeof(line), "MAPX:%3u MAPY:%3u", (unsigned)g_grids.map_x, (unsigned)g_grids.map_y);
@@ -1427,15 +1512,27 @@ static void draw_grids(void) {
     hal_io_oled_draw_text((uint8_t)(9u * 6u), 24u, token, true);
   }
 
-  snprintf(line, sizeof(line), "CHA:%3u", (unsigned)g_grids.chaos);
+  snprintf(line, sizeof(line), "PROB1:%3u PROB2:%3u", (unsigned)prob1, (unsigned)prob2);
   hal_io_oled_draw_line(4, line, false);
-  if (g_grids.selected_param == GRIDS_PARAM_CHAOS) {
-    snprintf(token, sizeof(token), "CHA:%3u", (unsigned)g_grids.chaos);
+  snprintf(line, sizeof(line), "PROB3:%3u PROB4:%3u", (unsigned)prob3, (unsigned)prob4);
+  hal_io_oled_draw_line(5, line, false);
+  if (g_grids.selected_param == GRIDS_PARAM_PROB1) {
+    snprintf(token, sizeof(token), "PROB1:%3u", (unsigned)prob1);
     hal_io_oled_draw_text(0u, 32u, token, true);
+  } else if (g_grids.selected_param == GRIDS_PARAM_PROB2) {
+    snprintf(token, sizeof(token), "PROB2:%3u", (unsigned)prob2);
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), 32u, token, true);
+  } else if (g_grids.selected_param == GRIDS_PARAM_PROB3) {
+    snprintf(token, sizeof(token), "PROB3:%3u", (unsigned)prob3);
+    hal_io_oled_draw_text(0u, 40u, token, true);
+  } else if (g_grids.selected_param == GRIDS_PARAM_PROB4) {
+    snprintf(token, sizeof(token), "PROB4:%3u", (unsigned)prob4);
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), 40u, token, true);
   }
 
   {
     grids_engine_t sim = g_grids.engine;
+    uint32_t sim_prob_rng = g_grids.prob_rng_state;
     uint8_t fill[4] = {g_grids.fill_u8[0], g_grids.fill_u8[1], g_grids.fill_u8[2], g_grids.fill_u8[3]};
 
     for (uint8_t ch = 0u; ch < 4u; ++ch) {
@@ -1450,7 +1547,7 @@ static void draw_grids(void) {
       uint8_t idx = sim.step;
       grids_engine_step(&sim, g_grids.map_x, g_grids.map_y, g_grids.chaos, fill, trig);
       for (uint8_t ch = 0u; ch < 4u; ++ch) {
-        preview[ch][idx] = trig[ch];
+        preview[ch][idx] = trig[ch] && prob_pass(g_grids.prob[ch], &sim_prob_rng);
       }
     }
 
@@ -1463,7 +1560,7 @@ static void draw_grids(void) {
   }
 
   if (!g_grids.preview_cache_valid) {
-    hal_io_oled_fill_rect(0u, 43u, 160u, 56u, false);
+    hal_io_oled_fill_rect(0u, 49u, 160u, 55u, false);
   }
 
   for (uint8_t ch = 0u; ch < 4u; ++ch) {
@@ -1563,6 +1660,11 @@ static void oled_draw_text_26(uint8_t y, const char* text, bool inverted) {
 
 static void draw_trigseq(void) {
   char line[32];
+  char token[20];
+  uint8_t prob1 = g_trigseq.prob[0];
+  uint8_t prob2 = g_trigseq.prob[1];
+  uint8_t prob3 = g_trigseq.prob[2];
+  uint8_t prob4 = g_trigseq.prob[3];
   bool force_grid = !g_trigseq.grid_cache_valid || (g_trigseq.grid_cache_mode != g_trigseq.len_mode);
   bool show_status =
       (g_trigseq.status_until_ms > to_ms_since_boot(get_absolute_time())) &&
@@ -1570,26 +1672,49 @@ static void draw_trigseq(void) {
 
   hal_io_oled_draw_line(0, "TRIGSEQ GRID", true);
 
-  snprintf(line, sizeof(line), "%c LEN   %s", g_trigseq.selected_param == TRIGSEQ_PARAM_LEN ? '>' : ' ',
-           trigseq_mode_label(g_trigseq.len_mode));
-  hal_io_oled_draw_line(1, line,
-                        g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_LEN);
-  snprintf(line, sizeof(line), "%c CLOCK %s", g_trigseq.selected_param == TRIGSEQ_PARAM_CLOCK ? '>' : ' ',
-           g_trigseq.clock == TRIGSEQ_CLOCK_INT ? "INT" : "EXT");
-  hal_io_oled_draw_line(2, line,
-                        g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_CLOCK);
+  snprintf(line, sizeof(line), "LEN:%s", trigseq_mode_label(g_trigseq.len_mode));
+  hal_io_oled_draw_line(1, line, false);
+  if (g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_LEN) {
+    snprintf(token, sizeof(token), "LEN:%s", trigseq_mode_label(g_trigseq.len_mode));
+    hal_io_oled_draw_text(0u, 8u, token, true);
+  }
+
   if (g_trigseq.clock == TRIGSEQ_CLOCK_INT) {
-    snprintf(line, sizeof(line), "%c BPM   %3d", g_trigseq.selected_param == TRIGSEQ_PARAM_BPM ? '>' : ' ',
+    snprintf(line, sizeof(line), "CLOCK:%s BPM:%3d", g_trigseq.clock == TRIGSEQ_CLOCK_INT ? "INT" : "EXT",
              g_trigseq.bpm);
   } else {
-    snprintf(line, sizeof(line), "%c BPM   ---", g_trigseq.selected_param == TRIGSEQ_PARAM_BPM ? '>' : ' ');
+    snprintf(line, sizeof(line), "CLOCK:%s BPM:---", g_trigseq.clock == TRIGSEQ_CLOCK_INT ? "INT" : "EXT");
   }
-  hal_io_oled_draw_line(3, line,
-                        g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_BPM);
-  snprintf(line, sizeof(line), "%c RUN   %s", g_trigseq.selected_param == TRIGSEQ_PARAM_RUN ? '>' : ' ',
-           g_trigseq.run ? "ON" : "OFF");
-  hal_io_oled_draw_line(4, line,
-                        g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_RUN);
+  hal_io_oled_draw_line(2, line, false);
+  if (g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_CLOCK) {
+    snprintf(token, sizeof(token), "CLOCK:%s", g_trigseq.clock == TRIGSEQ_CLOCK_INT ? "INT" : "EXT");
+    hal_io_oled_draw_text(0u, 16u, token, true);
+  } else if (g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_BPM) {
+    if (g_trigseq.clock == TRIGSEQ_CLOCK_INT) {
+      snprintf(token, sizeof(token), "BPM:%3d", g_trigseq.bpm);
+    } else {
+      snprintf(token, sizeof(token), "BPM:---");
+    }
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), 16u, token, true);
+  }
+
+  snprintf(line, sizeof(line), "PROB1:%3u PROB2:%3u", (unsigned)prob1, (unsigned)prob2);
+  hal_io_oled_draw_line(3, line, false);
+  snprintf(line, sizeof(line), "PROB3:%3u PROB4:%3u", (unsigned)prob3, (unsigned)prob4);
+  hal_io_oled_draw_line(4, line, false);
+  if (g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_PROB1) {
+    snprintf(token, sizeof(token), "PROB1:%3u", (unsigned)prob1);
+    hal_io_oled_draw_text(0u, 24u, token, true);
+  } else if (g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_PROB2) {
+    snprintf(token, sizeof(token), "PROB2:%3u", (unsigned)prob2);
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), 24u, token, true);
+  } else if (g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_PROB3) {
+    snprintf(token, sizeof(token), "PROB3:%3u", (unsigned)prob3);
+    hal_io_oled_draw_text(0u, 32u, token, true);
+  } else if (g_trigseq.focus == TRIGSEQ_FOCUS_MENU && g_trigseq.selected_param == TRIGSEQ_PARAM_PROB4) {
+    snprintf(token, sizeof(token), "PROB4:%3u", (unsigned)prob4);
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), 32u, token, true);
+  }
 
   if (force_grid) {
     // Clear thin gaps around the pixel-grid area so stale glyph rows don't remain visible.
@@ -1652,12 +1777,16 @@ static void draw_euclid(void) {
   bool sel_bpm = g_euclid.selected_param == EUCLID_PARAM_BPM;
   bool sel_c1s = g_euclid.selected_param == EUCLID_PARAM_CH1_STEPS;
   bool sel_c1h = g_euclid.selected_param == EUCLID_PARAM_CH1_HITS;
+  bool sel_c1p = g_euclid.selected_param == EUCLID_PARAM_CH1_PRB;
   bool sel_c2s = g_euclid.selected_param == EUCLID_PARAM_CH2_STEPS;
   bool sel_c2h = g_euclid.selected_param == EUCLID_PARAM_CH2_HITS;
+  bool sel_c2p = g_euclid.selected_param == EUCLID_PARAM_CH2_PRB;
   bool sel_c3s = g_euclid.selected_param == EUCLID_PARAM_CH3_STEPS;
   bool sel_c3h = g_euclid.selected_param == EUCLID_PARAM_CH3_HITS;
+  bool sel_c3p = g_euclid.selected_param == EUCLID_PARAM_CH3_PRB;
   bool sel_c4s = g_euclid.selected_param == EUCLID_PARAM_CH4_STEPS;
   bool sel_c4h = g_euclid.selected_param == EUCLID_PARAM_CH4_HITS;
+  bool sel_c4p = g_euclid.selected_param == EUCLID_PARAM_CH4_PRB;
 
   hal_io_oled_draw_line(0, "4X EUCLID", true);
 
@@ -1680,41 +1809,53 @@ static void draw_euclid(void) {
     hal_io_oled_draw_text((uint8_t)(10u * 6u), y_clock, token, true);
   }
 
-  snprintf(line, sizeof(line), "CH1 STEPS:%2u HITS:%2u", g_euclid.steps[0], g_euclid.hits[0]);
+  snprintf(line, sizeof(line), "1 STPS:%2u HITS:%2u PRB:%3u", g_euclid.steps[0], g_euclid.hits[0], g_euclid.prob[0]);
   oled_draw_text_26(y_ch1, line, false);
   if (sel_c1s) {
-    snprintf(token, sizeof(token), "STEPS:%2u", g_euclid.steps[0]);
-    hal_io_oled_draw_text((uint8_t)(4u * 6u), y_ch1, token, true);
+    snprintf(token, sizeof(token), "STPS:%2u", g_euclid.steps[0]);
+    hal_io_oled_draw_text((uint8_t)(2u * 6u), y_ch1, token, true);
   } else if (sel_c1h) {
     snprintf(token, sizeof(token), "HITS:%2u", g_euclid.hits[0]);
-    hal_io_oled_draw_text((uint8_t)(13u * 6u), y_ch1, token, true);
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), y_ch1, token, true);
+  } else if (sel_c1p) {
+    snprintf(token, sizeof(token), "PRB:%3u", g_euclid.prob[0]);
+    hal_io_oled_draw_text((uint8_t)(18u * 6u), y_ch1, token, true);
   }
-  snprintf(line, sizeof(line), "CH2 STEPS:%2u HITS:%2u", g_euclid.steps[1], g_euclid.hits[1]);
+  snprintf(line, sizeof(line), "2 STPS:%2u HITS:%2u PRB:%3u", g_euclid.steps[1], g_euclid.hits[1], g_euclid.prob[1]);
   oled_draw_text_26(y_ch2, line, false);
   if (sel_c2s) {
-    snprintf(token, sizeof(token), "STEPS:%2u", g_euclid.steps[1]);
-    hal_io_oled_draw_text((uint8_t)(4u * 6u), y_ch2, token, true);
+    snprintf(token, sizeof(token), "STPS:%2u", g_euclid.steps[1]);
+    hal_io_oled_draw_text((uint8_t)(2u * 6u), y_ch2, token, true);
   } else if (sel_c2h) {
     snprintf(token, sizeof(token), "HITS:%2u", g_euclid.hits[1]);
-    hal_io_oled_draw_text((uint8_t)(13u * 6u), y_ch2, token, true);
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), y_ch2, token, true);
+  } else if (sel_c2p) {
+    snprintf(token, sizeof(token), "PRB:%3u", g_euclid.prob[1]);
+    hal_io_oled_draw_text((uint8_t)(18u * 6u), y_ch2, token, true);
   }
-  snprintf(line, sizeof(line), "CH3 STEPS:%2u HITS:%2u", g_euclid.steps[2], g_euclid.hits[2]);
+  snprintf(line, sizeof(line), "3 STPS:%2u HITS:%2u PRB:%3u", g_euclid.steps[2], g_euclid.hits[2], g_euclid.prob[2]);
   oled_draw_text_26(y_ch3, line, false);
   if (sel_c3s) {
-    snprintf(token, sizeof(token), "STEPS:%2u", g_euclid.steps[2]);
-    hal_io_oled_draw_text((uint8_t)(4u * 6u), y_ch3, token, true);
+    snprintf(token, sizeof(token), "STPS:%2u", g_euclid.steps[2]);
+    hal_io_oled_draw_text((uint8_t)(2u * 6u), y_ch3, token, true);
   } else if (sel_c3h) {
     snprintf(token, sizeof(token), "HITS:%2u", g_euclid.hits[2]);
-    hal_io_oled_draw_text((uint8_t)(13u * 6u), y_ch3, token, true);
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), y_ch3, token, true);
+  } else if (sel_c3p) {
+    snprintf(token, sizeof(token), "PRB:%3u", g_euclid.prob[2]);
+    hal_io_oled_draw_text((uint8_t)(18u * 6u), y_ch3, token, true);
   }
-  snprintf(line, sizeof(line), "CH4 STEPS:%2u HITS:%2u", g_euclid.steps[3], g_euclid.hits[3]);
+  snprintf(line, sizeof(line), "4 STPS:%2u HITS:%2u PRB:%3u", g_euclid.steps[3], g_euclid.hits[3], g_euclid.prob[3]);
   oled_draw_text_26(y_ch4, line, false);
   if (sel_c4s) {
-    snprintf(token, sizeof(token), "STEPS:%2u", g_euclid.steps[3]);
-    hal_io_oled_draw_text((uint8_t)(4u * 6u), y_ch4, token, true);
+    snprintf(token, sizeof(token), "STPS:%2u", g_euclid.steps[3]);
+    hal_io_oled_draw_text((uint8_t)(2u * 6u), y_ch4, token, true);
   } else if (sel_c4h) {
     snprintf(token, sizeof(token), "HITS:%2u", g_euclid.hits[3]);
-    hal_io_oled_draw_text((uint8_t)(13u * 6u), y_ch4, token, true);
+    hal_io_oled_draw_text((uint8_t)(10u * 6u), y_ch4, token, true);
+  } else if (sel_c4p) {
+    snprintf(token, sizeof(token), "PRB:%3u", g_euclid.prob[3]);
+    hal_io_oled_draw_text((uint8_t)(18u * 6u), y_ch4, token, true);
   }
 
   if (force_grid) {
@@ -1774,6 +1915,37 @@ static bool active_app_has_live_pulse(void) {
   if (g_app_mode == APP_EUCLID) {
     return g_euclid.trig_state[0] || g_euclid.trig_state[1] || g_euclid.trig_state[2] || g_euclid.trig_state[3];
   }
+  return false;
+}
+
+static bool active_app_timing_priority_block_draw(uint64_t now_ms) {
+  const uint64_t tick_guard_ms = 4u;
+
+  if (active_app_has_live_pulse()) return true;
+
+  if (g_app_mode == APP_GRIDS) {
+    if (g_grids.clock == GRIDS_CLOCK_INT && g_grids.next_int_tick_ms <= (now_ms + tick_guard_ms)) {
+      return true;
+    }
+    if (g_grids.clock == GRIDS_CLOCK_EXT && hal_io_trigger_active(HAL_IO_TR1)) {
+      return true;
+    }
+  } else if (g_app_mode == APP_TRIGSEQ) {
+    if (g_trigseq.clock == TRIGSEQ_CLOCK_INT && g_trigseq.next_int_tick_ms <= (now_ms + tick_guard_ms)) {
+      return true;
+    }
+    if (g_trigseq.clock == TRIGSEQ_CLOCK_EXT && hal_io_trigger_active(HAL_IO_TR1)) {
+      return true;
+    }
+  } else if (g_app_mode == APP_EUCLID) {
+    if (g_euclid.clock == EUCLID_CLOCK_INT && g_euclid.next_int_tick_ms <= (now_ms + tick_guard_ms)) {
+      return true;
+    }
+    if (g_euclid.clock == EUCLID_CLOCK_EXT && hal_io_trigger_active(HAL_IO_TR1)) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -1847,10 +2019,13 @@ int main(void) {
     }
 
     if ((now_ms - last_draw_ms) >= DRAW_PERIOD_MS) {
-      // Drawing can block long enough to stretch output pulses. Skip this frame
-      // while any pulse is active; render right after pulses fall low.
-      if (active_app_has_live_pulse()) {
-        service_active_app_pulses(to_ms_since_boot(get_absolute_time()));
+      uint64_t draw_now = to_ms_since_boot(get_absolute_time());
+      service_active_app_pulses(draw_now);
+
+      // Sequencer timing has higher priority than UI rendering.
+      // If a pulse is active, external clock is high, or internal tick is imminent,
+      // skip draw and return quickly to timing update path.
+      if (active_app_timing_priority_block_draw(draw_now)) {
         sleep_ms(LOOP_SLEEP_MS);
         tight_loop_contents();
         continue;

@@ -7,7 +7,7 @@
 #include "pico/stdlib.h"
 
 #define APP_SETTINGS_FLASH_MAGIC 0x41505053u /* APPS */
-#define APP_SETTINGS_FLASH_VERSION 4u
+#define APP_SETTINGS_FLASH_VERSION 7u
 #define APP_SETTINGS_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - (2u * FLASH_SECTOR_SIZE))
 
 typedef struct {
@@ -65,6 +65,10 @@ void app_settings_set_defaults(app_settings_data_t* data) {
   data->grids.map_x = 128u;
   data->grids.map_y = 128u;
   data->grids.chaos = 64u;
+  data->grids.prob[0] = 100u;
+  data->grids.prob[1] = 100u;
+  data->grids.prob[2] = 100u;
+  data->grids.prob[3] = 100u;
 
   data->trigseq.length = 16u;
   data->trigseq.edit_channel = 0u;
@@ -72,6 +76,10 @@ void app_settings_set_defaults(app_settings_data_t* data) {
   data->trigseq.clock_mode = 1u; /* EXT */
   data->trigseq.bpm = 120u;
   data->trigseq.run = 1u;
+  data->trigseq.prob[0] = 100u;
+  data->trigseq.prob[1] = 100u;
+  data->trigseq.prob[2] = 100u;
+  data->trigseq.prob[3] = 100u;
   data->trigseq.pattern[0] = 0x000000000000AAAAull;
   data->trigseq.pattern[1] = 0x000000000000CCCCull;
   data->trigseq.pattern[2] = 0x000000000000F0F0ull;
@@ -87,6 +95,10 @@ void app_settings_set_defaults(app_settings_data_t* data) {
   data->euclid.hits[1] = 6u;
   data->euclid.hits[2] = 8u;
   data->euclid.hits[3] = 10u;
+  data->euclid.prob[0] = 100u;
+  data->euclid.prob[1] = 100u;
+  data->euclid.prob[2] = 100u;
+  data->euclid.prob[3] = 100u;
 }
 
 bool app_settings_init(app_settings_data_t* data) {

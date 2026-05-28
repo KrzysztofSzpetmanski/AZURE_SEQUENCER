@@ -14,6 +14,7 @@ typedef struct {
   uint8_t map_x;
   uint8_t map_y;
   uint8_t chaos;
+  uint8_t prob[4]; /* 0..100% */
 } grids_settings_t;
 
 typedef struct {
@@ -23,6 +24,7 @@ typedef struct {
   uint8_t clock_mode; /* 0=INT, 1=EXT */
   uint16_t bpm;
   uint8_t run;
+  uint8_t prob[4]; /* 0..100% */
   uint64_t pattern[4];
 } trigseq_settings_t;
 
@@ -31,6 +33,7 @@ typedef struct {
   uint16_t bpm;
   uint8_t steps[4];
   uint8_t hits[4];
+  uint8_t prob[4]; /* 0..100% */
 } euclid_settings_t;
 
 typedef struct {
