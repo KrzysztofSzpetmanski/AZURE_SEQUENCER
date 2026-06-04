@@ -17,6 +17,9 @@ Repo zawiera firmware testowe `hrdw_test` dla płytki AZURE (RP2350 / Pico 2), z
 - `HRDW_TEST` - aktualny test I/O
 - `CALIBRATION` - kalibracja kodów DAC (kopiowana z `TRIG_GATE_SEQ`)
 - `GRIDS` - placeholder (na razie pusty)
+- `TRIG SEQ` - trigger sequencer z edycją siatki
+- `TR2GATE` - konwersja triggerow na gate per kanal
+- `TR2ADSR` - konwersja triggerow na obwiednie AR/ASR/ADSR per kanal
 
 W aplikacji `HRDW_TEST`:
 
@@ -30,7 +33,9 @@ W aplikacji `HRDW_TEST`:
 
 - `ENC1` (lewy): wybór aktywnego kanału DAC `A/B/C/D`
 - `ENC2` (prawy): zmiana napięcia wybranego kanału co `0.5V`
-- Zakres napięcia: `-3.0V .. +6.0V` (clamp w firmware)
+- Zakres napięcia zależny od aktywnego trybu kalibracji:
+- `-3.0V .. +7.0V`
+- `0.0V .. +10.0V`
 
 ### Sterowanie menu
 
@@ -48,7 +53,7 @@ W aplikacji `HRDW_TEST`:
 
 ### Kalibracja (`CALIBRATION`)
 
-- Parametry: `CH`, `POINT`, `CODE`
+- Parametry: `CH`, `MODE`, `POINT`, `CODE`
 - `ENC1`: wybór parametru
 - `ENC2`: zmiana wartości
 - `ENC_R_SW`: zapis kalibracji do flash

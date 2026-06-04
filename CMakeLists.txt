@@ -37,6 +37,7 @@ add_executable(hrdw_test
   src/hal_mux_adc.c
   src/calibration.c
   src/app_settings.c
+  src/app_presets.c
   src/grids_engine.c
   src/trigseq_engine.c
 )

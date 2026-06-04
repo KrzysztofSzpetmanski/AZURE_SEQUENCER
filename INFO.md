@@ -8,12 +8,17 @@
 
 ## Default Calibration Codes
 
-Per channel default points used by calibration:
+Per channel calibration stores separate point tables for both ranges:
 
-- `-3V` -> `0000`
-- `0V` -> `1220`
-- `+3V` -> `2453`
-- `+6V` -> `3680`
+- `-3..+7V`: `-3V`, `0V`, `+3V`, `+7V`
+- `0..+10V`: `0V`, `+3V`, `+6V`, `+10V`
+
+Fresh defaults are ideal linear 10 V span codes:
+
+- `0000`
+- `1229`
+- `2457`
+- `4095`
 
 Calibration is CRC-protected and stored in flash.
 
@@ -21,7 +26,8 @@ Calibration is CRC-protected and stored in flash.
 
 - `ENC1` (left): menu/parameter selection
 - `ENC2` (right): parameter value edit
-- `ENC_R_SW`: save in calibration and app settings contexts
+- `SW1` / `SW2`: app screen navigation; the last two preset-enabled app screens are `LOAD` and `SAVE`
+- `ENC_R_SW`: preset popup (`LOAD` / `SAVE`) on normal preset-enabled app screens
 - `ENC_L_SW`: back to app menu
 
 ## GRIDS Screen Layout (current)

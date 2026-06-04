@@ -5,10 +5,12 @@ Firmware workspace for the AZURE Eurorack module based on Raspberry Pi Pico 2 (R
 ## Current Apps
 
 - `HRDW_TEST` - hardware I/O diagnostics, DAC/CV view, encoder/button tests
-- `CALIBRATION` - 4-point DAC calibration (`-3V`, `0V`, `+3V`, `+6V`) with flash persistence
+- `CALIBRATION` - 4-point DAC calibration with two ranges: `-3..+7V` and `0..+10V`
 - `GRIDS` - Mutable Grids-style trigger engine with parameter menu and 32-step per-channel preview
-- `TRIGSEQ` - trigger sequencer with grid editing and clock options
+- `TRIG SEQ` - trigger sequencer with grid editing, presets and clock options
 - `4XEUCLID` - 4-channel Euclidean trigger generator with per-channel steps/hits
+- `TR2GATE` - 4-channel trigger-to-gate converter with per-channel source/time/probability
+- `TR2ADSR` - 4-channel trigger-to-envelope generator with AR/ASR/ADSR modes
 
 ## Build
 
