@@ -8,20 +8,22 @@ Repo zawiera firmware testowe `hrdw_test` dla płytki AZURE (RP2350 / Pico 2), z
 
 - MCU: Raspberry Pi Pico 2 (RP2350)
 - Build: CMake + Pico SDK
+- Firmware build label: `AZURE       build 2.001`
 - Binarka: `hrdw_test`
 
 ## Aplikacja `hrdw_test`
 
 `hrdw_test` uruchamia podstawowe peryferia i ma menu startowe:
 
-- `HRDW_TEST` - aktualny test I/O
 - `CALIBRATION` - kalibracja kodów DAC (kopiowana z `TRIG_GATE_SEQ`)
+- `NOTES` - podglad punktow kalibracji
+- `VOLTS` - podglad zakresu i wartosci napiec
 - `GRIDS` - placeholder (na razie pusty)
 - `TRIG SEQ` - trigger sequencer z edycją siatki
 - `TR2GATE` - konwersja triggerow na gate per kanal
 - `TR2ADSR` - konwersja triggerow na obwiednie AR/ASR/ADSR per kanal
 
-W aplikacji `HRDW_TEST`:
+W ekranach sprzętowych:
 
 - OLED (SPI, tryb tekstowy)
 - Enkodery (kwadratura + liczniki increment/decrement)
@@ -43,17 +45,10 @@ W aplikacji `HRDW_TEST`:
 - `ENC_R_SW`: wejście do wybranej aplikacji
 - `ENC1_SW`: powrót do menu
 
-### Widok OLED (`HRDW_TEST`)
-
-- Nagłówek testu i status DAC
-- Aktualny wybór kanału DAC
-- Aktualne napięcia wyjść DAC A/B/C/D
-- Napięcia z `CV_MUX` (`CV1..CV4`)
-- Stany i liczniki enkoderów/przycisków
-
 ### Kalibracja (`CALIBRATION`)
 
 - Parametry: `CH`, `MODE`, `POINT`, `CODE`
+- `MODE` przełącza zakres między `-3.0V .. +7.0V` i `0.0V .. +10.0V`
 - `ENC1`: wybór parametru
 - `ENC2`: zmiana wartości
 - `ENC_R_SW`: zapis kalibracji do flash

@@ -18,6 +18,7 @@
 
 #define MCP4728_I2C_ADDR_DEFAULT 0x60u
 #define MCP4728_I2C_ADDR_MAX 0x67u
+#define DAC_I2C_BAUDRATE 400000u
 #define DAC_CODE_MAX_12BIT 4095u
 #define BTN_DEBOUNCE_MS 25u
 #define ENCODER_PIN_MASK 0x03u
@@ -105,6 +106,9 @@ static struct repeating_timer g_encoder_poll_timer;
 
 static bool g_dac_addr_found = false;
 static uint8_t g_dac_i2c_addr = MCP4728_I2C_ADDR_DEFAULT;
+static bool g_dac_cache_valid = false;
+static uint16_t g_dac_last_codes[4] = {0u, 0u, 0u, 0u};
+static hal_io_dac_diag_t g_dac_diag = {0u, 0u, 0u, 0u};
 
 static inline bool is_pressed(uint8_t pin) { return !gpio_get(pin); }
 
@@ -417,6 +421,22 @@ static bool mcp4728_write_channel(uint8_t channel, uint16_t logical_code_12bit) 
 static bool write_all_dac_codes(const uint16_t* codes4) {
   uint8_t ch;
   bool ok = true;
+  bool any_changed = false;
+
+  if (codes4 == NULL) return false;
+
+  for (ch = 0; ch < 4u; ++ch) {
+    if (!g_dac_cache_valid || codes4[ch] != g_dac_last_codes[ch]) {
+      any_changed = true;
+      break;
+    }
+  }
+
+  if (!any_changed) {
+    g_dac_diag.skipped_write_calls += 1u;
+    g_dac_diag.skipped_channel_writes += 4u;
+    return true;
+  }
 
   if (!g_dac_addr_found) {
     g_dac_addr_found = detect_mcp4728_address();
@@ -424,11 +444,23 @@ static bool write_all_dac_codes(const uint16_t* codes4) {
   }
 
   for (ch = 0; ch < 4u; ++ch) {
+    if (g_dac_cache_valid && codes4[ch] == g_dac_last_codes[ch]) {
+      g_dac_diag.skipped_channel_writes += 1u;
+      continue;
+    }
     ok = mcp4728_write_channel(ch, codes4[ch]) && ok;
+    if (ok) {
+      g_dac_last_codes[ch] = codes4[ch];
+      g_dac_diag.channel_writes += 1u;
+    }
   }
 
   if (ok) g_dac_addr_found = true;
   if (!ok) g_dac_addr_found = false;
+  if (ok) {
+    g_dac_cache_valid = true;
+    g_dac_diag.write_calls += 1u;
+  }
   return ok;
 }
 
@@ -533,7 +565,11 @@ void hal_io_init(void) {
     g_buttons[i].last_change_ms = now_ms;
   }
 
-  i2c_init(i2c0, 100 * 1000);
+  // MCP4728/I2C bounds timing accuracy; firmware minimizes jitter with IRQ
+  // timestamps, cached output states and batched DAC writes. 400 kHz needs
+  // stable MCP4728 operation and appropriate pull-ups; set this back to
+  // 100000u if the bus proves marginal on a build.
+  i2c_init(i2c0, DAC_I2C_BAUDRATE);
   gpio_set_function(HRDW_PIN_I2C_SDA, GPIO_FUNC_I2C);
   gpio_set_function(HRDW_PIN_I2C_SCL, GPIO_FUNC_I2C);
   gpio_pull_up(HRDW_PIN_I2C_SDA);
@@ -620,12 +656,16 @@ bool hal_io_dac_set_channels_code(const uint16_t codes_4[4]) {
   return write_all_dac_codes(codes_4);
 }
 
+void hal_io_dac_get_diag(hal_io_dac_diag_t* diag) {
+  if (diag == NULL) return;
+  *diag = g_dac_diag;
+}
+
 void hal_io_oled_clear(void) {
   fill_screen(COLOR_BLACK);
 }
 
-void hal_io_oled_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white) {
-  uint16_t color = white ? COLOR_WHITE : COLOR_BLACK;
+void hal_io_oled_fill_rect_color(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
   uint8_t hi = (uint8_t)(color >> 8);
   uint8_t lo = (uint8_t)(color & 0xFFu);
   uint8_t px[2 * 64];
@@ -666,19 +706,27 @@ void hal_io_oled_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool whit
   }
 }
 
-void hal_io_oled_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white) {
+void hal_io_oled_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white) {
+  hal_io_oled_fill_rect_color(x, y, w, h, white ? COLOR_WHITE : COLOR_BLACK);
+}
+
+void hal_io_oled_draw_rect_color(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
   if (w == 0u || h == 0u) return;
 
-  hal_io_oled_fill_rect(x, y, w, 1u, white);
+  hal_io_oled_fill_rect_color(x, y, w, 1u, color);
   if (h > 1u) {
-    hal_io_oled_fill_rect(x, (uint8_t)(y + h - 1u), w, 1u, white);
+    hal_io_oled_fill_rect_color(x, (uint8_t)(y + h - 1u), w, 1u, color);
   }
   if (h > 2u) {
-    hal_io_oled_fill_rect(x, (uint8_t)(y + 1u), 1u, (uint8_t)(h - 2u), white);
+    hal_io_oled_fill_rect_color(x, (uint8_t)(y + 1u), 1u, (uint8_t)(h - 2u), color);
     if (w > 1u) {
-      hal_io_oled_fill_rect((uint8_t)(x + w - 1u), (uint8_t)(y + 1u), 1u, (uint8_t)(h - 2u), white);
+      hal_io_oled_fill_rect_color((uint8_t)(x + w - 1u), (uint8_t)(y + 1u), 1u, (uint8_t)(h - 2u), color);
     }
   }
+}
+
+void hal_io_oled_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white) {
+  hal_io_oled_draw_rect_color(x, y, w, h, white ? COLOR_WHITE : COLOR_BLACK);
 }
 
 void hal_io_oled_draw_pixel(uint8_t x, uint8_t y, bool white) {

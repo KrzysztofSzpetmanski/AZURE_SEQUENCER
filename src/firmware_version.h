@@ -1,0 +1,4 @@
+#pragma once
+
+#define AZURE_FIRMWARE_BUILD "2.001"
+#define AZURE_MENU_HEADER "AZURE       build " AZURE_FIRMWARE_BUILD

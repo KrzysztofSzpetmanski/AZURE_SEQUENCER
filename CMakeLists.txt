@@ -35,6 +35,8 @@ add_executable(hrdw_test
   src/hrdw_test.c
   src/hal_io.c
   src/hal_mux_adc.c
+  src/clock_input.c
+  src/trigger_output.c
   src/calibration.c
   src/app_settings.c
   src/app_presets.c

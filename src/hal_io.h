@@ -45,6 +45,15 @@ bool hal_io_dac_set_channels_mv(const int32_t millivolts_4[4]);
 bool hal_io_dac_set_all_mv(int32_t millivolts);
 bool hal_io_dac_set_channels_code(const uint16_t codes_4[4]);
 
+typedef struct {
+  uint32_t write_calls;
+  uint32_t channel_writes;
+  uint32_t skipped_write_calls;
+  uint32_t skipped_channel_writes;
+} hal_io_dac_diag_t;
+
+void hal_io_dac_get_diag(hal_io_dac_diag_t* diag);
+
 void hal_io_oled_clear(void);
 void hal_io_oled_draw_line(uint8_t row, const char* text, bool inverted);
 void hal_io_oled_draw_line_color(uint8_t row, const char* text, uint16_t fg, uint16_t bg);
@@ -52,6 +61,8 @@ void hal_io_oled_draw_text(uint8_t x, uint8_t y, const char* text, bool inverted
 void hal_io_oled_draw_pixel(uint8_t x, uint8_t y, bool white);
 void hal_io_oled_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white);
 void hal_io_oled_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool white);
+void hal_io_oled_fill_rect_color(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color);
+void hal_io_oled_draw_rect_color(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color);
 
 #ifdef __cplusplus
 }
