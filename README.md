@@ -2,7 +2,7 @@
 
 Firmware workspace for the AZURE Eurorack module based on Raspberry Pi Pico 2 (RP2350).
 
-Current firmware build: `2.001`
+Current firmware build: `2.003`
 
 ## Current Apps
 

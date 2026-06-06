@@ -4,7 +4,7 @@
 
 - Board: Raspberry Pi Pico 2 / RP2350
 - Main firmware target: `hrdw_test`
-- Current firmware build: `2.001`
+- Current firmware build: `2.003`
 - Build system: CMake + Pico SDK
 
 ## Default Calibration Codes
@@ -24,7 +24,7 @@ Fresh defaults are ideal linear 10 V span codes:
 Calibration is CRC-protected and stored in flash.
 
 The main menu also includes `NOTES` and `VOLTS` helper screens for calibration-point and voltage summaries.
-The main menu header shows the firmware build label, currently `AZURE       build 2.001`.
+The main menu header shows the firmware build label, currently `AZURE       build 2.003`.
 The old hardware-test app has been split out into `/Users/lazuli/Documents/PROGRAMMING/RSB_PICO/TESTER_FIRMWARE/AZURE_SEQ_TEST`.
 
 ## Controls Summary

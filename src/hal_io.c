@@ -625,9 +625,11 @@ bool hal_io_trigger_active(hal_io_trigger_t tr) {
       pin = HRDW_PIN_TR2_IN;
       break;
     case HAL_IO_TR3:
-      return false;
+      pin = HRDW_PIN_TR3_IN;
+      break;
     case HAL_IO_TR4:
-      return false;
+      pin = HRDW_PIN_TR4_IN;
+      break;
     default:
       return false;
   }

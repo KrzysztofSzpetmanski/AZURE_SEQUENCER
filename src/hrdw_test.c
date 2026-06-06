@@ -844,21 +844,16 @@ static uint8_t clamp_u8i_100(int x) {
   return (uint8_t)x;
 }
 
-static uint8_t grids_add_cv_u8(uint8_t base, uint8_t cv_index) {
-  int value = (int)base + (int)g_grids.fill_u8[cv_index];
-  return clamp_u8i(value);
-}
-
 static uint8_t grids_effective_map_x(void) {
-  return grids_add_cv_u8(g_grids.map_x, 0u);
+  return g_grids.map_x;
 }
 
 static uint8_t grids_effective_map_y(void) {
-  return grids_add_cv_u8(g_grids.map_y, 1u);
+  return g_grids.map_y;
 }
 
 static uint8_t grids_effective_randomness(void) {
-  return grids_add_cv_u8(g_grids.chaos, 2u);
+  return g_grids.chaos;
 }
 
 static void grids_mark_token_dirty(uint8_t idx) {
@@ -1223,6 +1218,7 @@ static void set_cvgen_status(const char* s) {
 }
 
 static bool read_trigger_active_src(uint8_t src);
+static bool prob_pass(uint8_t prob_percent, uint32_t* rng_state);
 
 static const char* cvgen_algo_label(cvgen_algo_t algo) {
   if (algo == CVGEN_ALGO_BEZIER) return "BEZIER";
@@ -1359,22 +1355,6 @@ static bool read_trigger_active_src(uint8_t src) {
   if (src == 2u) return hal_io_trigger_active(HAL_IO_TR3);
   if (src == 3u) return hal_io_trigger_active(HAL_IO_TR4);
   return hal_io_trigger_active(HAL_IO_TR1);
-}
-
-static void sample_trigger_edges_us(bool* prev_active, bool* edge_out, uint64_t* edge_timestamp_us) {
-  uint64_t now_us = time_us_64();
-  bool active[4];
-  active[0] = hal_io_trigger_active(HAL_IO_TR1);
-  active[1] = hal_io_trigger_active(HAL_IO_TR2);
-  active[2] = hal_io_trigger_active(HAL_IO_TR3);
-  active[3] = hal_io_trigger_active(HAL_IO_TR4);
-  for (uint8_t i = 0u; i < 4u; ++i) {
-    edge_out[i] = active[i] && !prev_active[i];
-    if (edge_out[i] && edge_timestamp_us != NULL) {
-      edge_timestamp_us[i] = now_us;
-    }
-    prev_active[i] = active[i];
-  }
 }
 
 static uint16_t app_code_from_mv(int32_t mv, uint8_t ch) {
@@ -1627,6 +1607,28 @@ static void tr2gate_enter(void) {
   tr2gate_reset_outputs_and_state();
 }
 
+static void tr2gate_on_source_edge_us(uint8_t src, uint64_t timestamp_us) {
+  uint8_t fire_mask = 0u;
+  uint32_t gate_width_us[4] = {0u, 0u, 0u, 0u};
+  uint64_t gate_timestamp_us[4] = {0u, 0u, 0u, 0u};
+
+  if (src >= 4u) return;
+
+  for (uint8_t ch = 0u; ch < 4u; ++ch) {
+    if (g_tr2gate.source[ch] == src && prob_pass(g_tr2gate.prob[ch], &g_tr2gate.rng_state)) {
+      fire_mask |= (uint8_t)(1u << ch);
+      gate_width_us[ch] = (uint32_t)g_tr2gate.gate_time_cs[ch] * 10000u;
+      gate_timestamp_us[ch] = timestamp_us;
+    }
+  }
+
+  if (fire_mask != 0u) {
+    trigger_output_set_unipolar_levels(g_tr2gate.level_10v ? 10000 : 5000);
+    g_tr2gate.outputs_ok = trigger_engine_fire_mask_events(fire_mask, gate_timestamp_us, gate_width_us);
+    tr2gate_sync_gate_out_from_engine();
+  }
+}
+
 static bool tr2adsr_param_visible(uint8_t ch, tr2adsr_param_t param) {
   if (param == TR2ADSR_PARAM_DECAY) {
     return g_tr2adsr.type[ch] == TR2ADSR_ENV_ADSR;
@@ -1871,6 +1873,16 @@ static void tr2adsr_reset_outputs_and_state(void) {
 static void tr2adsr_enter(void) {
   g_tr2adsr.rng_state ^= (uint32_t)time_us_64() ^ 0x3141592Bu;
   tr2adsr_reset_outputs_and_state();
+}
+
+static void tr2adsr_on_source_edge_us(uint8_t src, uint64_t timestamp_us) {
+  if (src >= 4u) return;
+
+  for (uint8_t ch = 0u; ch < 4u; ++ch) {
+    if (g_tr2adsr.source[ch] == src && prob_pass(g_tr2adsr.prob[ch], &g_tr2adsr.rng_state)) {
+      tr2adsr_on_trigger_us(ch, timestamp_us);
+    }
+  }
 }
 
 static void burstgen_reset_outputs_and_state(void) {
@@ -2435,13 +2447,9 @@ static void grids_reset_outputs_and_state(void) {
 }
 
 static void grids_update_cv_cache(uint64_t now_us) {
-  uint8_t prev_fill_u8[3] = {g_grids.fill_u8[0], g_grids.fill_u8[1], g_grids.fill_u8[2]};
   if (now_us < g_grids.next_cv_cache_us) return;
   g_grids.next_cv_cache_us = now_us + CV_CACHE_PERIOD_US;
   grids_sample_fill_from_cv();
-  if (g_grids.fill_u8[0] != prev_fill_u8[0]) grids_mark_token_dirty(GRIDS_PARAM_MAP_X);
-  if (g_grids.fill_u8[1] != prev_fill_u8[1]) grids_mark_token_dirty(GRIDS_PARAM_MAP_Y);
-  if (g_grids.fill_u8[2] != prev_fill_u8[2]) grids_mark_token_dirty(GRIDS_PARAM_CHAOS);
 }
 
 static void grids_on_clock_tick(uint64_t timestamp_us) {
@@ -3125,15 +3133,9 @@ static void update_calibration(int32_t d_l, int32_t d_r, bool edge_enc_r) {
 
 static void update_tr2gate(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_sw1, bool edge_sw2,
                            uint64_t now_ms) {
-  bool edge_src[4];
-  uint64_t edge_timestamp_us[4] = {0u, 0u, 0u, 0u};
   uint64_t now_us = time_us_64();
-  uint8_t fire_mask = 0u;
-  uint32_t gate_width_us[4] = {0u, 0u, 0u, 0u};
-  uint64_t gate_timestamp_us[4] = {0u, 0u, 0u, 0u};
-  // Selectable TR inputs are foreground-polled and timestamped when sampled.
-  // They are useful for routing, but less precise than the TR1 clock IRQ path.
-  sample_trigger_edges_us(g_tr2gate.src_active, edge_src, edge_timestamp_us);
+  // TR1-TR4 rising edges are delivered through the GPIO IRQ queues. Active
+  // levels are still polled for the OLED input monitor only.
   g_tr2gate.mode = TR2GATE_MODE_DIRECT;
   if (g_tr2gate.selected_param == TR2GATE_PARAM_MODE) {
     g_tr2gate.selected_param = TR2GATE_PARAM_CHANNEL;
@@ -3170,21 +3172,8 @@ static void update_tr2gate(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_
     }
   }
 
-  for (uint8_t ch = 0u; ch < 4u; ++ch) {
-    bool fire = edge_src[g_tr2gate.source[ch]];
-    if (fire && prob_pass(g_tr2gate.prob[ch], &g_tr2gate.rng_state)) {
-      uint32_t width_us = (uint32_t)g_tr2gate.gate_time_cs[ch] * 10000u;
-      fire_mask |= (uint8_t)(1u << ch);
-      gate_width_us[ch] = width_us;
-      gate_timestamp_us[ch] = edge_timestamp_us[g_tr2gate.source[ch]];
-    }
-  }
   trigger_output_set_unipolar_levels(g_tr2gate.level_10v ? 10000 : 5000);
-  g_tr2gate.outputs_ok = true;
-  if (fire_mask != 0u) {
-    g_tr2gate.outputs_ok = trigger_engine_fire_mask_events(fire_mask, gate_timestamp_us, gate_width_us);
-  }
-  g_tr2gate.outputs_ok = trigger_engine_update(now_us) && g_tr2gate.outputs_ok;
+  g_tr2gate.outputs_ok = trigger_engine_update(now_us);
   tr2gate_sync_gate_out_from_engine();
 
   if (edge_enc_r) {
@@ -3194,14 +3183,10 @@ static void update_tr2gate(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_
 
 static void update_tr2adsr(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_sw1, bool edge_sw2,
                            uint64_t now_ms) {
-  bool edge_src[4];
-  uint64_t edge_timestamp_us[4] = {0u, 0u, 0u, 0u};
   uint8_t prev_channel = g_tr2adsr.selected_channel;
   tr2adsr_param_t prev_param = g_tr2adsr.selected_param;
-  // TR2ADSR selectable TR inputs are foreground-polled, not IRQ-clocked like TR1.
-  // Rising edges are timestamped in us when sampled, then converted to ms for
-  // the slower CV envelope state machine.
-  sample_trigger_edges_us(g_tr2adsr.src_active, edge_src, edge_timestamp_us);
+  // TR1-TR4 rising edges are delivered through the GPIO IRQ queues. Gate level
+  // is still polled because ASR/T&H-style behavior needs to know when input is high.
   tr2adsr_refresh_cv_inputs();
   tr2adsr_sync_screen_channel();
   if (handle_active_app_preset_ui(d_l, d_r, edge_enc_r, edge_sw1, edge_sw2, now_ms)) {
@@ -3276,9 +3261,6 @@ static void update_tr2adsr(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_
 
   for (uint8_t ch = 0u; ch < 4u; ++ch) {
     uint8_t src = g_tr2adsr.source[ch];
-    if (edge_src[src] && prob_pass(g_tr2adsr.prob[ch], &g_tr2adsr.rng_state)) {
-      tr2adsr_on_trigger_us(ch, edge_timestamp_us[src]);
-    }
     {
       bool gate_high = read_trigger_active_src(src) || (g_tr2adsr.gate_hold_until_ms[ch] > now_ms);
       tr2adsr_advance_env(ch, now_ms, gate_high);
@@ -3293,12 +3275,9 @@ static void update_tr2adsr(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_
 
 static void update_burstgen(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge_sw1, bool edge_sw2,
                             uint64_t now_ms) {
-  bool edge_src[4];
-  uint64_t edge_timestamp_us[4] = {0u, 0u, 0u, 0u};
   uint64_t now_us = time_us_64();
   burstgen_param_t prev_selected = g_burstgen.selected_param;
-  sample_trigger_edges_us(g_burstgen.src_active, edge_src, edge_timestamp_us);
-  edge_src[0] = false;  // TR1 burst starts are timestamped by ClockInputEngine.
+  // TR1-TR4 burst starts are timestamped by GPIO IRQ queues.
 
   if (handle_active_app_preset_ui(d_l, d_r, edge_enc_r, false, false, now_ms)) {
     d_l = 0;
@@ -3343,12 +3322,6 @@ static void update_burstgen(int32_t d_l, int32_t d_r, bool edge_enc_r, bool edge
       g_burstgen.level_10v = !g_burstgen.level_10v;
       trigger_output_set_unipolar_levels(g_burstgen.level_10v ? 10000 : 5000);
       burstgen_mark_token_dirty(BURSTGEN_PARAM_LEVEL);
-    }
-  }
-
-  for (uint8_t ch = 0u; ch < 4u; ++ch) {
-    if (edge_src[ch]) {
-      burstgen_start_channel(ch, edge_timestamp_us[ch]);
     }
   }
 
@@ -4284,6 +4257,8 @@ static void draw_grids(void) {
     hal_io_oled_fill_rect(0u, 120u, 160u, 8u, false);
     if (show_status) {
       hal_io_oled_draw_text(0u, 120u, status, false);
+    } else {
+      hal_io_oled_draw_text(0u, 120u, "FILL 1-4: POTS 1-4", false);
     }
     snprintf(g_grids.ui_status, sizeof(g_grids.ui_status), "%s", status);
     g_grids.ui_status_visible = show_status;
@@ -4664,13 +4639,28 @@ static void app_on_clock_tick(app_mode_t active_app, uint64_t timestamp_us) {
     trigseq_on_clock_tick(timestamp_us);
   } else if (active_app == APP_EUCLID && g_euclid.clock == EUCLID_CLOCK_EXT) {
     euclid_on_clock_tick(timestamp_us);
+  } else if (active_app == APP_TR2GATE) {
+    tr2gate_on_source_edge_us(0u, timestamp_us);
+  } else if (active_app == APP_TR2ADSR) {
+    tr2adsr_on_source_edge_us(0u, timestamp_us);
   } else if (active_app == APP_BURSTGEN) {
     burstgen_start_channel(0u, timestamp_us);
   }
 }
 
+static void app_on_trigger_edge(app_mode_t active_app, uint8_t source, uint64_t timestamp_us) {
+  if (active_app == APP_TR2GATE) {
+    tr2gate_on_source_edge_us(source, timestamp_us);
+  } else if (active_app == APP_TR2ADSR) {
+    tr2adsr_on_source_edge_us(source, timestamp_us);
+  } else if (active_app == APP_BURSTGEN) {
+    burstgen_start_channel(source, timestamp_us);
+  }
+}
+
 static void service_clock_input_events(void) {
   clock_event_t ev;
+  trigger_edge_event_t trig_ev;
   while (clock_input_pop_event(&ev)) {
     uint64_t now_us = time_us_64();
     uint64_t latency_us = now_us > ev.timestamp_us ? now_us - ev.timestamp_us : 0u;
@@ -4678,6 +4668,10 @@ static void service_clock_input_events(void) {
       g_max_clock_event_latency_us = latency_us > UINT32_MAX ? UINT32_MAX : (uint32_t)latency_us;
     }
     app_on_clock_tick(g_app_mode, ev.timestamp_us);
+  }
+
+  while (clock_input_pop_trigger_edge(&trig_ev)) {
+    app_on_trigger_edge(g_app_mode, trig_ev.source, trig_ev.timestamp_us);
   }
 }
 
@@ -4699,8 +4693,7 @@ static void service_active_app_pulses(uint64_t now_us) {
 }
 
 static bool active_app_has_live_pulse(void) {
-  if (g_app_mode == APP_GRIDS || g_app_mode == APP_TRIGSEQ || g_app_mode == APP_EUCLID ||
-      g_app_mode == APP_TR2GATE || g_app_mode == APP_BURSTGEN) {
+  if (g_app_mode == APP_GRIDS || g_app_mode == APP_TRIGSEQ || g_app_mode == APP_EUCLID) {
     return trigger_engine_any_active();
   }
   return false;
@@ -4725,7 +4718,7 @@ static bool active_app_timing_priority_block_draw(uint64_t now_us) {
     }
   } else if (g_app_mode == APP_BURSTGEN) {
     for (uint8_t ch = 0u; ch < 4u; ++ch) {
-      if (g_burstgen.running[ch]) {
+      if (g_burstgen.running[ch] && g_burstgen.next_step_at_us[ch] <= (now_us + tick_guard_us)) {
         return true;
       }
     }

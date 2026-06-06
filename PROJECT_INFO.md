@@ -8,7 +8,7 @@ Repo zawiera firmware testowe `hrdw_test` dla płytki AZURE (RP2350 / Pico 2), z
 
 - MCU: Raspberry Pi Pico 2 (RP2350)
 - Build: CMake + Pico SDK
-- Firmware build label: `AZURE       build 2.001`
+- Firmware build label: `AZURE       build 2.003`
 - Binarka: `hrdw_test`
 
 ## Aplikacja `hrdw_test`
